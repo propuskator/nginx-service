@@ -1,0 +1,238 @@
+{{ACME_CERTBOT_SERVER}}
+{{REDIRECT_SERVER}}
+{{REDIRECT_FROM_IP_TO_HOSTNAME}}
+server {
+    gzip on;
+    gzip_disable "msie6";
+    gzip_comp_level 6;
+    gzip_min_length 1100;
+    gzip_buffers 16 8k;
+    gzip_proxied any;
+    gzip_types
+        text/plain
+        text/css
+        text/js
+        text/xml
+        text/javascript
+        application/javascript
+        application/x-javascript
+        application/json
+        application/xml
+        application/rss+xml
+        image/svg+xml;
+
+    {{LISTENING_PORT_80}}
+    {{LISTENING_PORT_443}}
+
+    server_name {{SERVER_NAME}};
+    client_max_body_size 5M;
+
+    ssl_certificate {{SSL_CERTIFICATE}};
+    ssl_certificate_key {{SSL_CERTIFICATE_KEY}};
+
+    resolver 127.0.0.11 ipv6=off valid=30s;
+
+    ssl_session_cache shared:le_nginx_SSL:10m;
+    ssl_session_timeout 1440m;
+    ssl_session_tickets off;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+
+    ssl_ciphers "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384";
+
+    set $path_to_password_file /var/tmp/shared/.htpasswd;
+    ## enable basic auth if file exists
+    set $auth_basic off;
+    if (-f $path_to_password_file) {
+        set $auth_basic Restricted;
+    }
+
+    {{STUB_STATUS_LOCATION}}
+    {{MONITORING_LOCATION}}
+    {{PRODUCTION_LOCATIONS}}
+
+    location /robots.txt {
+        set $path_robots_txt /var/tmp/shared/robots.txt; ## custom robots_txt file path
+        set $robots_txt_location /etc/nginx/robots.txt; ## default file
+
+        if (-f $path_robots_txt) {
+            set $robots_txt_location $path_robots_txt;
+        }
+
+        alias $robots_txt_location;
+    }
+
+    location / {
+        auth_basic $auth_basic;
+        auth_basic_user_file $path_to_password_file;
+
+        set $accessui "access-ui";
+        proxy_pass http://$accessui:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+
+        location ~* config\.js$ {
+            set $accessui "access-ui";
+            proxy_pass http://$accessui:3000;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection 'upgrade';
+            proxy_set_header Host $host;
+            proxy_cache_bypass $http_upgrade;
+            expires -1;
+            add_header Cache-Control no-store;
+        }
+    }
+
+    location /api/ {
+        set $accessbackend "access-backend";
+        proxy_pass http://$accessbackend:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+
+    location /node-static {
+        set $accessbackend "access-backend";
+        proxy_pass http://$accessbackend:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
+        expires 30d;
+    }
+
+    location /.well-known {
+        expires off;
+        autoindex on;
+        root /var/tmp/shared;
+    }
+
+    location ~* ^/node-static/(?<route>[a-z0-9\/-]+)\.(?<wsize>[0-9]+)x(?<hsize>[0-9]+)\.(?<ext>(jpg|jpeg|png))$ {
+        set $accessbackend "access-backend";
+        proxy_pass http://$accessbackend:8000/node-static/$route.$ext$is_args$args;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
+        image_filter crop $wsize $hsize;
+        image_filter_buffer 20M;
+        expires 30d;
+    }
+
+    location /assets {
+        set $accessbackend "access-backend";
+        proxy_pass http://$accessbackend:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
+        expires 30d;
+    }
+
+    location /instructions {
+        set $accessbackend "access-backend";
+        proxy_pass http://$accessbackend:8000;
+        expires 30d;
+    }
+
+    location /mqtt {
+        set $emqxbroker "access-emqx";
+        proxy_pass http://$emqxbroker:8083;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
+    }
+
+    location /streamming-service {
+        set $accessstreammingservice "access-streamming-service";
+        proxy_pass http://$accessstreammingservice:9001;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
+    }
+
+    location /mqtt-proxy {
+        set $mqttproxy "access-mqtt-proxy";
+        proxy_pass http://$mqttproxy:8083;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
+    }
+
+    location /updater/v1 {
+        set $updater "access-updater";
+        proxy_pass http://$updater:28080;
+        expires off;
+        proxy_redirect off;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /install_access_control.sh {
+        root /var/tmp;
+    }
+
+    location /releases {
+        expires off;
+        autoindex on;
+        root /var/tmp ;
+    }
+
+    location ~* /smarthome/(?<route>.*) {
+        set $google_home "google-home";
+        set $port "3000";
+        proxy_pass http://$google_home:$port/$route$is_args$args;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
+        expires off;
+        proxy_redirect off;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /phone-trigger-webhook {
+        set $webhook "access-phone-trigger-webhook";
+        proxy_pass http://$webhook:38080;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
+        expires off;
+        proxy_redirect off;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /phone-trigger-webhook-swagger {
+        set $webhook "access-phone-trigger-webhook";
+        proxy_pass http://$webhook:38080;
+    }
+    {{TELEGRAM_BOT_LOCATION}}
+
+    location /access-bucket/cameras {
+        set $accessbackend "access-backend";
+        proxy_pass http://$accessbackend:8000;
+    }
+}
